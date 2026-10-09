@@ -13,13 +13,17 @@ blueprint:
 
     Bottom button, hold: dim the Big Light until released.
 
-    Left arrow: shift the Big Light colour temperature warmer.
+    Left / right arrow: in white mode shift colour temperature warmer / cooler;
+    in colour mode step the hue down / up.
 
-    Right arrow: shift the Big Light colour temperature cooler.
+
+    Konami code (optional, needs a helper): up, up, down, down, left, right,
+    left, right as short presses switches between white and colour mode.
 
 
-    The Big Light must support brightness and colour temperature. Hold loops
-    stop on release and are capped at 30 iterations.
+    The Big Light must support brightness and colour temperature. Colour mode
+    needs a colour-capable Big Light. Hold loops stop on release and are
+    capped at 30 iterations.
   domain: automation
   homeassistant:
     min_version: "2024.10.0"
@@ -51,8 +55,8 @@ blueprint:
           name: Big Light
           description: >
             Main fixture. Toggled by the top button; dimmed with hold; colour
-            temperature set with the arrows. Must support brightness and colour
-            temperature.
+            temperature or hue set with the arrows. Must support brightness and
+            colour temperature.
           selector:
             entity:
               filter:
@@ -95,7 +99,7 @@ blueprint:
               unit_of_measurement: s
         kelvin_step:
           name: Colour temperature step
-          description: Change per left/right arrow press.
+          description: Change per arrow press in white mode.
           default: 400
           selector:
             number:
@@ -104,6 +108,56 @@ blueprint:
               step: 100
               mode: slider
               unit_of_measurement: K
+        hue_step:
+          name: Hue step
+          description: Hue change per arrow press in colour mode.
+          default: 30
+          selector:
+            number:
+              min: 5
+              max: 90
+              step: 5
+              mode: slider
+              unit_of_measurement: "°"
+
+    colour_section:
+      name: Colour mode and Konami code
+      icon: mdi:palette
+      collapsed: true
+      input:
+        colour_mode_helper:
+          name: Colour mode helper (optional)
+          description: >
+            An input_boolean that stores whether colour mode is on. If left
+            empty, colour mode is inferred from the Big Light itself (on while
+            it is in a colour mode) and can only be switched while the light
+            is on.
+          default: ""
+          selector:
+            entity:
+              filter:
+                domain: input_boolean
+        konami_helper:
+          name: Konami code helper (optional)
+          description: >
+            An input_text (max length at least 30) used to track progress of
+            the Konami code. If left empty the Konami code is disabled.
+          default: ""
+          selector:
+            entity:
+              filter:
+                domain: input_text
+        konami_timeout:
+          name: Konami code timeout
+          description: Maximum time allowed between presses of the code.
+          default: 3
+          selector:
+            number:
+              min: 1
+              max: 10
+              step: 0.5
+              mode: slider
+              unit_of_measurement: s
 
 # restart cancels a running hold loop when the release (brightness_stop) or any
 # other button event arrives
@@ -127,10 +181,111 @@ variables:
   dim_step: !input dimming_step
   dim_trans: !input dimming_transition
   k_step: !input kelvin_step
+  h_step: !input hue_step
+  colour_helper: !input colour_mode_helper
+  konami_helper: !input konami_helper
+  konami_timeout: !input konami_timeout
+  colour_modes:
+    - hs
+    - xy
+    - rgb
+    - rgbw
+    - rgbww
+  code:
+    - "on"
+    - "on"
+    - "off"
+    - "off"
+    - arrow_left_click
+    - arrow_right_click
+    - arrow_left_click
+    - arrow_right_click
   act: "{{ trigger.payload_json.action }}"
 
 actions:
+  # Konami progress is kept as "<presses matched>|<epoch of last press>"
+  - variables:
+      konami_on: "{{ konami_helper | string | length > 0 }}"
+      is_press: "{{ act in code }}"
+      prev: >-
+        {{ (states(konami_helper) ~ '|0').split('|') if konami_helper | string | length > 0
+           else ['0', '0'] }}
+      prev_idx: "{{ prev[0] | int(0) }}"
+      now_ts: "{{ now().timestamp() }}"
+      fresh: >-
+        {{ prev_idx > 0 and prev_idx < 8
+           and (now_ts - (prev[1] | float(0))) <= (konami_timeout | float(3)) }}
+      base_idx: "{{ prev_idx if fresh else 0 }}"
+      new_idx: >-
+        {{ base_idx + 1 if act == code[base_idx]
+           else (1 if act == code[0] else 0) }}
+      code_done: "{{ konami_on and is_press and new_idx == 8 }}"
+      # computed in one expression on purpose: supported_color_modes is a list
+      # of StrEnum members and does not survive being stored in a variable
+      supports_colour: >-
+        {{ (state_attr(big_light, 'supported_color_modes') | default([], true))
+           | select('in', colour_modes) | list | count > 0 }}
+      cur_colour: >-
+        {{ is_state(colour_helper, 'on') if colour_helper | string | length > 0
+           else state_attr(big_light, 'color_mode') in colour_modes }}
+      colour_active: "{{ cur_colour and supports_colour }}"
+
+  - if:
+      - condition: template
+        value_template: "{{ konami_on and is_press }}"
+    then:
+      - action: input_text.set_value
+        target:
+          entity_id: "{{ konami_helper }}"
+        data:
+          value: "{{ 0 if code_done else new_idx }}|{{ now_ts }}"
+
   - choose:
+      # Konami code completed: switch between white and colour mode
+      - conditions:
+          - condition: template
+            value_template: "{{ code_done and supports_colour }}"
+        sequence:
+          - variables:
+              to_colour: "{{ not cur_colour }}"
+              hs: "{{ state_attr(big_light, 'hs_color') or [30, 100] }}"
+              kelvin: >-
+                {{ [[state_attr(big_light, 'color_temp_kelvin') | int(4000), 2000] | max, 6500] | min }}
+          - if:
+              - condition: template
+                value_template: "{{ colour_helper | string | length > 0 }}"
+            then:
+              - action: "{{ 'input_boolean.turn_on' if to_colour else 'input_boolean.turn_off' }}"
+                target:
+                  entity_id: "{{ colour_helper }}"
+          - if:
+              - condition: state
+                entity_id: !input big_light
+                state: "on"
+            then:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ to_colour }}"
+                    sequence:
+                      - action: light.turn_on
+                        target:
+                          entity_id: "{{ big_light }}"
+                        data:
+                          hs_color: "{{ hs }}"
+                default:
+                  - action: light.turn_on
+                    target:
+                      entity_id: "{{ big_light }}"
+                    data:
+                      color_temp_kelvin: "{{ kelvin }}"
+
+      # Konami code with nothing to switch (no colour support): swallow it
+      - conditions:
+          - condition: template
+            value_template: "{{ code_done }}"
+        sequence: []
+
       # top, short press
       - conditions:
           - condition: template
@@ -189,7 +344,39 @@ actions:
                 - condition: template
                   value_template: "{{ repeat.index >= 30 }}"
 
-      # left arrow: warmer (lower kelvin), clamped to 2000-6500K
+      # arrows in colour mode: step hue. Sent as its own command without a
+      # transition and verified, as many Zigbee bulbs drop or mangle colour
+      # sent with other attributes (same approach as the original blueprint).
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ act in ['arrow_left_click', 'arrow_right_click'] and colour_active }}
+        sequence:
+          - variables:
+              cur_hs: "{{ state_attr(big_light, 'hs_color') or [0, 100] }}"
+              new_h: >-
+                {{ (cur_hs[0] + (h_step if act == 'arrow_right_click' else -h_step)) % 360 }}
+              new_s: "{{ cur_hs[1] }}"
+          - repeat:
+              sequence:
+                - action: light.turn_on
+                  target:
+                    entity_id: "{{ big_light }}"
+                  data:
+                    hs_color:
+                      - "{{ new_h }}"
+                      - "{{ new_s }}"
+                - delay:
+                    milliseconds: 700
+              until:
+                - condition: template
+                  value_template: >-
+                    {% set hs = state_attr(big_light, 'hs_color') %}
+                    {{ repeat.index >= 3
+                       or (hs is not none
+                           and (((hs[0] - new_h | float) + 540) % 360 - 180) | abs < 5) }}
+
+      # left arrow, white mode: warmer (lower kelvin), clamped to 2000-6500K
       - conditions:
           - condition: template
             value_template: "{{ act == 'arrow_left_click' }}"
@@ -203,7 +390,7 @@ actions:
                 {{ [[k - k_step, 2000] | max, 6500] | min }}
               transition: "{{ dim_trans }}"
 
-      # right arrow: cooler (higher kelvin), clamped to 2000-6500K
+      # right arrow, white mode: cooler (higher kelvin), clamped to 2000-6500K
       - conditions:
           - condition: template
             value_template: "{{ act == 'arrow_right_click' }}"
