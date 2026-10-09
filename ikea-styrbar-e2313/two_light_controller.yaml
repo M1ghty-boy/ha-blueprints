@@ -95,17 +95,31 @@ blueprint:
               step: 0.1
               mode: slider
               unit_of_measurement: s
-        hue_step:
-          name: Hue step
-          description: Hue change per loop iteration while holding left/right.
-          default: 20
+        hue_speed:
+          name: Hue sweep speed
+          description: >
+            Degrees of hue per second while holding left/right. Commands are
+            sent at most about 3 times per second, each fading over one loop
+            interval (the longer of the dimming transition and 0.35 s).
+          default: 60
+          selector:
+            number:
+              min: 10
+              max: 180
+              step: 5
+              mode: slider
+              unit_of_measurement: "°/s"
+        max_hold_seconds:
+          name: Max hue sweep time
+          description: Safety cap; the sweep also stops on release.
+          default: 30
           selector:
             number:
               min: 5
-              max: 90
+              max: 120
               step: 5
               mode: slider
-              unit_of_measurement: "°"
+              unit_of_measurement: s
         click_window:
           name: Click window
           description: >
@@ -126,19 +140,35 @@ blueprint:
       icon: mdi:palette
       collapsed: true
       input:
-        default_white_kelvin:
-          name: Default white
+        color_temp_startup_entity:
+          name: Color temp startup entity (optional)
           description: >
-            Colour temperature set by a double click on the left arrow.
-            Brightness is left untouched. Clamped to 2000-6500 K.
-          default: 3000
+            The bulb's "Color temp startup" config entity from Zigbee2MQTT
+            (a number, select or sensor whose name contains
+            color_temp_startup). Its state is read in mireds and applied by a
+            double click on the left arrow. If empty or the state is not a
+            number (for example "previous"), the fallback below is used.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: number
+                - domain: select
+                - domain: sensor
+        default_white_mireds:
+          name: Fallback white (mireds)
+          description: >
+            Colour temperature in mireds (not Kelvin) used when no startup
+            entity is set or its state is not numeric. 333 mireds = 3000 K.
+            Always clamped to the Big Light's own range.
+          default: 333
           selector:
             number:
-              min: 2000
-              max: 6500
-              step: 100
+              min: 100
+              max: 600
+              step: 1
               mode: slider
-              unit_of_measurement: K
+              unit_of_measurement: mired
         colour_presets:
           name: Colour presets
           description: >
@@ -181,9 +211,11 @@ variables:
   lamp: !input lamp
   dim_step: !input dimming_step
   dim_trans: !input dimming_transition
-  h_step: !input hue_step
+  hue_speed: !input hue_speed
+  max_hold: !input max_hold_seconds
   click_window: !input click_window
-  white_k: !input default_white_kelvin
+  startup_entity: !input color_temp_startup_entity
+  white_m: !input default_white_mireds
   presets: !input colour_presets
   act: "{{ trigger.payload_json.action }}"
 
@@ -235,35 +267,47 @@ actions:
                 - condition: template
                   value_template: "{{ wait.trigger is not none or repeat.index >= 30 }}"
 
-      # left / right arrow hold: sweep hue until released, max 30 steps
+      # left / right arrow hold: continuous hue sweep until released or
+      # max_hold_seconds. Each command fades over one loop interval so the
+      # fades chain. The target hue is computed from the start hue and elapsed
+      # time, not read back, because the reported hue lags during a fade.
       - conditions:
           - condition: template
             value_template: "{{ act in ['arrow_left_hold', 'arrow_right_hold'] }}"
         sequence:
+          - variables:
+              start_hs: "{{ state_attr(big_light, 'hs_color') or [0, 100] }}"
+              start_ts: "{{ now().timestamp() }}"
+              # never faster than 3 commands per second
+              interval: "{{ [dim_trans, 0.35] | max }}"
+              direction: "{{ 1 if act == 'arrow_right_hold' else -1 }}"
           - repeat:
               sequence:
                 - variables:
-                    cur_hs: "{{ state_attr(big_light, 'hs_color') or [0, 100] }}"
+                    elapsed: "{{ now().timestamp() - start_ts }}"
                     new_h: >-
-                      {{ (cur_hs[0] + (h_step if act == 'arrow_right_hold' else h_step * -1)) % 360 }}
+                      {{ (start_hs[0] + direction * hue_speed * (elapsed + interval)) % 360 }}
                 - action: light.turn_on
                   target:
                     entity_id: "{{ big_light }}"
                   data:
                     hs_color:
                       - "{{ new_h }}"
-                      - "{{ cur_hs[1] }}"
+                      - "{{ start_hs[1] }}"
+                    transition: "{{ interval }}"
                 - wait_for_trigger:
                     - trigger: mqtt
                       topic: "{{ topic }}"
                       value_template: >-
                         {{ value_json.action in ['arrow_left_release', 'arrow_right_release'] }}
                   timeout:
-                    milliseconds: "{{ (dim_trans * 1000) | int }}"
+                    milliseconds: "{{ (interval * 1000) | int }}"
                   continue_on_timeout: true
               until:
                 - condition: template
-                  value_template: "{{ wait.trigger is not none or repeat.index >= 30 }}"
+                  value_template: >-
+                    {{ wait.trigger is not none
+                       or now().timestamp() - start_ts >= max_hold }}
 
       # left / right arrow click: count clicks inside the click window
       - conditions:
@@ -287,9 +331,19 @@ actions:
                   then:
                     - variables:
                         clicks: "{{ repeat.index }}"
+                        # startup value is in mireds; non-numeric states
+                        # (previous, named presets, unavailable) fall back to
+                        # the configured white; result is clamped to the
+                        # light's own range
                         send_k: >-
-                          {{ [[white_k | int(3000), 2000] | max, 6500] | min
-                             if act == 'arrow_left_click' and clicks == 2 else none }}
+                          {% if act == 'arrow_left_click' and clicks == 2 %}
+                            {% set s = states(startup_entity) if startup_entity | string | length > 0 else '' %}
+                            {% set m = s | float(none) %}
+                            {% if m is none or m <= 0 %}{% set m = white_m | float(333) %}{% endif %}
+                            {% set lo = 1000000 / (state_attr(big_light, 'max_color_temp_kelvin') | float(6535)) %}
+                            {% set hi = 1000000 / (state_attr(big_light, 'min_color_temp_kelvin') | float(2000)) %}
+                            {{ (1000000 / ([[m, lo] | max, hi] | min)) | round(0) | int }}
+                          {% else %}{{ none }}{% endif %}
                         send_hs: >-
                           {{ presets[clicks - 2]
                              if act == 'arrow_right_click' and clicks >= 2
