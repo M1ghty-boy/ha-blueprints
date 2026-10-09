@@ -6,7 +6,7 @@
 
 Customised two-light control for the IKEA STYRBAR, for one dimmable, multicolour light (such as the "big light" on a main fixture) and one fixed-brightness light (such as a lamp on a smart plug).
 
-[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fpqpxo%2Fha-blueprints%2Fblob%2Fmain%2Fikea-styrbar-e2313%2Ftwo_light_controller.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FM1ghty-boy%2Fha-blueprints%2Fblob%2Fmain%2Fikea-styrbar-e2313%2Ftwo_light_controller.yaml)
 
 ## ⚠️ AI Slop Disclosure
 
