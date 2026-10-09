@@ -18,7 +18,8 @@ blueprint:
     Right arrow: shift the Big Light colour temperature cooler.
 
 
-    The Big Light must support brightness and colour temperature.
+    The Big Light must support brightness and colour temperature. Hold loops
+    stop on release and are capped at 30 iterations.
   domain: automation
   homeassistant:
     min_version: "2024.10.0"
@@ -64,50 +65,45 @@ blueprint:
               filter:
                 domain: light
 
-    behaviour_section:
-      name: Behaviour
+    tuning_section:
+      name: Tuning
       icon: mdi:tune
       collapsed: true
       input:
-        brightness_step:
-          name: Hold brightness step
+        dimming_step:
+          name: Dimming step
           description: Brightness change per loop iteration while holding.
           default: 10
           selector:
             number:
               min: 1
-              max: 50
+              max: 25
               step: 1
+              mode: slider
               unit_of_measurement: "%"
-        step_interval:
-          name: Hold step interval
-          description: Delay between brightness steps while holding.
-          default: 0.3
+        dimming_transition:
+          name: Dimming transition
+          description: >
+            Transition time, and delay between steps, while holding.
+          default: 0.4
           selector:
             number:
               min: 0.1
-              max: 2
+              max: 2.0
               step: 0.1
+              mode: slider
               unit_of_measurement: s
         kelvin_step:
           name: Colour temperature step
           description: Change per left/right arrow press.
-          default: 300
+          default: 400
           selector:
             number:
-              min: 50
-              max: 1000
-              step: 50
+              min: 100
+              max: 1200
+              step: 100
+              mode: slider
               unit_of_measurement: K
-        transition:
-          name: Transition
-          default: 0.3
-          selector:
-            number:
-              min: 0
-              max: 5
-              step: 0.1
-              unit_of_measurement: s
 
 # restart cancels a running hold loop when the release (brightness_stop) or any
 # other button event arrives
@@ -128,10 +124,9 @@ conditions:
 variables:
   big_light: !input big_light
   lamp: !input lamp
-  step: !input brightness_step
-  interval: !input step_interval
+  dim_step: !input dimming_step
+  dim_trans: !input dimming_transition
   k_step: !input kelvin_step
-  tr: !input transition
   act: "{{ trigger.payload_json.action }}"
 
 actions:
@@ -145,7 +140,7 @@ actions:
             target:
               entity_id: "{{ big_light }}"
             data:
-              transition: "{{ tr }}"
+              transition: "{{ dim_trans }}"
 
       # bottom, short press
       - conditions:
@@ -162,16 +157,18 @@ actions:
             value_template: "{{ act == 'brightness_move_up' }}"
         sequence:
           - repeat:
-              count: 30
               sequence:
                 - action: light.turn_on
                   target:
                     entity_id: "{{ big_light }}"
                   data:
-                    brightness_step_pct: "{{ step }}"
-                    transition: "{{ interval }}"
+                    brightness_step_pct: "{{ dim_step }}"
+                    transition: "{{ dim_trans }}"
                 - delay:
-                    milliseconds: "{{ (interval * 1000) | int }}"
+                    milliseconds: "{{ (dim_trans * 1000) | int }}"
+              until:
+                - condition: template
+                  value_template: "{{ repeat.index >= 30 }}"
 
       # bottom, hold: dim until released
       - conditions:
@@ -179,18 +176,20 @@ actions:
             value_template: "{{ act == 'brightness_move_down' }}"
         sequence:
           - repeat:
-              count: 30
               sequence:
                 - action: light.turn_on
                   target:
                     entity_id: "{{ big_light }}"
                   data:
-                    brightness_step_pct: "{{ step * -1 }}"
-                    transition: "{{ interval }}"
+                    brightness_step_pct: "{{ dim_step * -1 }}"
+                    transition: "{{ dim_trans }}"
                 - delay:
-                    milliseconds: "{{ (interval * 1000) | int }}"
+                    milliseconds: "{{ (dim_trans * 1000) | int }}"
+              until:
+                - condition: template
+                  value_template: "{{ repeat.index >= 30 }}"
 
-      # left arrow: warmer (lower kelvin)
+      # left arrow: warmer (lower kelvin), clamped to 2000-6500K
       - conditions:
           - condition: template
             value_template: "{{ act == 'arrow_left_click' }}"
@@ -201,11 +200,10 @@ actions:
             data:
               color_temp_kelvin: >-
                 {% set k = state_attr(big_light, 'color_temp_kelvin') | int(4000) %}
-                {% set lo = state_attr(big_light, 'min_color_temp_kelvin') | int(2000) %}
-                {{ [k - k_step, lo] | max }}
-              transition: "{{ tr }}"
+                {{ [[k - k_step, 2000] | max, 6500] | min }}
+              transition: "{{ dim_trans }}"
 
-      # right arrow: cooler (higher kelvin)
+      # right arrow: cooler (higher kelvin), clamped to 2000-6500K
       - conditions:
           - condition: template
             value_template: "{{ act == 'arrow_right_click' }}"
@@ -216,6 +214,5 @@ actions:
             data:
               color_temp_kelvin: >-
                 {% set k = state_attr(big_light, 'color_temp_kelvin') | int(4000) %}
-                {% set hi = state_attr(big_light, 'max_color_temp_kelvin') | int(6500) %}
-                {{ [k + k_step, hi] | min }}
-              transition: "{{ tr }}"
+                {{ [[k + k_step, 2000] | max, 6500] | min }}
+              transition: "{{ dim_trans }}"
