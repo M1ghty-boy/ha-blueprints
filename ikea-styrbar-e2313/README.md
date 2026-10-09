@@ -10,7 +10,7 @@ Customised two-light control for the IKEA STYRBAR, for one dimmable, multicolour
 
 ## ⚠️ AI Slop Disclosure
 
-> "This fork is 100% vibecoded AI slop. I had a new bedroom with a light and a main light switch that wasn't functioning. I usually endeavour for my creations to be human written or human architected and supervised, but i do not understand YAML, nor do i have the time to fiddle with it for weeks when i need lighting. This was 100% (actually pretty decently) led by github copilot under my loose instruction for feature iteration. This slip in my standards is purely as i made this for myself. I would not subject the general public to slop created in this manner. As such, if you use this, it is all at your own risk"
+> "This fork, and most of this readme, is 100% vibecoded AI slop. I had a new bedroom with a light and a main light switch that wasn't functioning. I usually endeavour for my creations to be human written or human architected and supervised, but i do not understand YAML, nor do i have the time to fiddle with it for weeks when i need lighting. This was 100% (actually pretty decently) led by github copilot under my loose instruction for feature iteration. This slip in my standards is purely as i made this for myself. I would not subject the general public to slop created in this manner. As such, if you use this, it is all at your own risk"
 
 ## What changed from the original, and why
 
@@ -100,10 +100,10 @@ The action strings are hard-coded to the STYRBAR set (`on`, `off`, `arrow_left_c
 
 ## Testing
 
-The YAML parses and the Jinja templates compile, but this has **not** been tested on a live Home Assistant instance or a real STYRBAR. The riskiest assumptions are that the startup entity's state is in mireds, that the bulb fades hue smoothly, and that `wait_for_trigger` matches the release events.
+The YAML parses and the Jinja templates compile, this is in active use in my oqn live Home Assistant instance with a real STYRBAR. The riskiest assumptions are that the startup entity's state is in mireds, that the bulb fades hue smoothly, and that `wait_for_trigger` matches the release events.
 
 ## Licence
 
-The author does not want anyone earning money from this AI-generated work, so commercial use is not allowed. The new and changed work in this repository is licensed under the [PolyForm Noncommercial License 1.0.0](../LICENSE): free to copy, modify and share for noncommercial purposes.
+The author does not want anyone earning money from this AI-generated slop, so commercial use is not allowed. It'd be a waste of energy, and hypocritical for me not to leave this for everyone's free use otherwise. The new and changed work in this repository is licensed under the [PolyForm Noncommercial License 1.0.0](../LICENSE): free to copy, modify and share for noncommercial purposes.
 
 Scope, stated plainly: the upstream blueprint by pqpxo has no licence file, and its README states only "MIT". The portions of this fork that derive from it remain under that author's own terms, which I cannot change; the noncommercial licence applies only to the new and changed work. Nothing here claims more than that, and this is not legal advice.
