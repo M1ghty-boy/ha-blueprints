@@ -141,9 +141,10 @@ blueprint:
       collapsed: true
       input:
         color_temp_startup_entity:
-          name: Color temp startup entity (optional)
+          name: Colour temp startup entity (optional)
           description: >
-            The bulb's "Color temp startup" config entity from Zigbee2MQTT
+            The bulb's "Color temp startup" config entity (Zigbee2MQTT's own
+            spelling of the name)
             (a number, select or sensor whose name contains
             color_temp_startup). Its state is read in mireds and applied by a
             double click on the left arrow. If empty or the state is not a
