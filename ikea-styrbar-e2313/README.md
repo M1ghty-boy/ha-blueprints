@@ -29,6 +29,8 @@ Two behaviours make this different from a plain button-to-action blueprint.
 
 **Live colour sync (optional).** While both lights are on, changing the colour of either one from anywhere, a dashboard, voice assistant or another automation, mirrors it to the other. Turn this off if you want the two lights set independently.
 
+> **Refactored layout:** this version controls a main fixture (Big Light) and an accent Lamp, and replaces the original two-light colour matching behaviour. Top short press toggles the Big Light, bottom short press toggles the Lamp, top/bottom hold brightens/dims the Big Light, and left/right arrows shift its colour temperature warmer/cooler. The sections below describe the previous version.
+
 ## Requirements
 
 - Home Assistant 2024.10 or newer (the blueprint uses input sections)
